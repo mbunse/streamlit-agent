@@ -25,11 +25,14 @@ langchain-community = "^0.0.12"
 langchain-openai = "^0.0.2.post1"
 numexpr = "^2.8.8"
 langchainhub = "^0.1.14"
+chromadb = "^0.4.24"
+apify-client = "^1.6.4"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.3.0"
 mypy = "^1.4.1"
 pre-commit = "^3.3.3"
+ipykernel = "^6.29.3"
 
 [build-system]
 requires = ["poetry-core"]
