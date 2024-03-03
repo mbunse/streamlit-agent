@@ -3,20 +3,34 @@ from langchain.docstore.document import Document
 from langchain.indexes import VectorstoreIndexCreator
 from langchain_community.utilities import ApifyWrapper
 from langchain_community.vectorstores import Chroma
-from langchain.text_splitter import HTMLHeaderTextSplitter, RecursiveCharacterTextSplitter
+from langchain_text_splitters import (
+    HTMLHeaderTextSplitter,
+    RecursiveCharacterTextSplitter,
+    MarkdownTextSplitter,
+)
 from langchain_openai import OpenAIEmbeddings
 from datetime import datetime
+import pickle
+from langchain_pinecone import PineconeVectorStore
+from langchain_openai import OpenAIEmbeddings
+import pinecone
+import os
 
-import chromadb
+
+# %%
+pinecone.init(api_key=os.environ["PINECONE_API_KEY"], environment=os.environ["PINECONE_ENV"])
 
 
 # %%
-persistent_client = chromadb.PersistentClient(path="./chroma_db")
-collection = persistent_client.get_or_create_collection("rvs_webpages")
-# collection.add(ids=["1", "2", "3"], documents=["a", "b", "c"])
 
-# %%
-collection.get()
+
+embedding = OpenAIEmbeddings()
+index_name = "rvs-demo"
+namespace = "my-namespace"
+vectorstore = PineconeVectorStore(
+    index_name=index_name,
+    embedding=embedding,
+)
 
 # %%
 apify = ApifyWrapper()
@@ -25,41 +39,15 @@ url = "https://www.raiffeisen.at/rvs/de/privatkunden.html"
 loader = apify.call_actor(
     actor_id="apify/website-content-crawler",
     run_input={
-        "aggressivePrune": False,
-        "clickElementsCssSelector": '[aria-expanded="false"]',
-        "clientSideMinChangePercentage": 15,
-        "debugLog": False,
-        "debugMode": False,
-        "ignoreCanonicalUrl": False,
         "includeUrlGlobs": [{"glob": "https://www.raiffeisen.at/rvs/de/privatkunden/*/*"}],
         "maxCrawlDepth": 2,
-        "maxResults": 1000,
-        "proxyConfiguration": {"useApifyProxy": True},
-        "readableTextCharThreshold": 100,
-        "removeCookieWarnings": True,
-        "removeElementsCssSelector": 'nav, footer, script, style, noscript, svg,\n[role="alert"],\n[role="banner"],\n[role="dialog"],\n[role="alertdialog"],\n[role="region"][aria-label*="skip" i],\n[aria-modal="true"]',
-        "renderingTypeDetectionPercentage": 10,
-        "saveFiles": False,
-        "saveHtml": False,
-        "saveMarkdown": True,
-        "saveScreenshots": False,
+        "maxResults": 10,
         "startUrls": [{"url": "https://www.raiffeisen.at/rvs/de/privatkunden.html"}],
-        "useSitemaps": False,
-        "crawlerType": "playwright:firefox",
-        "excludeUrlGlobs": [],
         "maxCrawlPages": 1000,
-        "initialConcurrency": 0,
-        "maxConcurrency": 200,
-        "initialCookies": [],
-        "maxSessionRotations": 10,
-        "maxRequestRetries": 5,
-        "requestTimeoutSecs": 60,
-        "dynamicContentWaitSecs": 10,
-        "maxScrollHeightPixels": 5000,
-        "htmlTransformer": "readableText",
+        "saveMarkdown": True,
     },
     dataset_mapping_function=lambda item: Document(
-        page_content=item["text"] or "",
+        page_content=item["markdown"] or "",
         metadata={"source": item["url"], "date": datetime.now().isoformat()},
     ),
 )
@@ -70,14 +58,39 @@ loader = apify.call_actor(
 documents = loader.load()
 
 # %%
+pickle.dump(documents, open("documents.pkl", "wb"))
+
+# %%
+documents = pickle.load(open("documents.pkl", "rb"))
+
+# %%
 documents
 
 # %%
-chunk_size = 500
-chunk_overlap = 30
+headers_to_split_on = [
+    ("#", "Header 1"),
+    ("##", "Header 2"),
+    ("###", "Header 3"),
+]
+
+markdown_splitter = MarkdownTextSplitter()
+md_header_splits = markdown_splitter.split_documents(documents)
+md_header_splits[0]
+
+# %%
+md_header_splits[0].metadata
+
+# %%
+chunk_size = 1500
+chunk_overlap = 100
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 split_documents = text_splitter.split_documents(documents)
 split_documents[:4]
+
+# %%
+import IPython
+
+IPython.display.Markdown(split_documents[0].page_content)
 
 # %%
 embeddings = OpenAIEmbeddings()
