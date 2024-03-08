@@ -13,24 +13,33 @@ from datetime import datetime
 import pickle
 from langchain_pinecone import PineconeVectorStore
 from langchain_openai import OpenAIEmbeddings
-import pinecone
+from pinecone import Pinecone, PodSpec
 import os
 
 
 # %%
-pinecone.init(api_key=os.environ["PINECONE_API_KEY"], environment=os.environ["PINECONE_ENV"])
-
+# configure client
+pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
+pc.list_indexes()
 
 # %%
-
-
-embedding = OpenAIEmbeddings()
 index_name = "rvs-demo"
-namespace = "my-namespace"
-vectorstore = PineconeVectorStore(
-    index_name=index_name,
-    embedding=embedding,
+pc_index = pc.Index(index_name)
+pc_index.describe_index_stats()
+
+# %%
+pc.delete_index(index_name)
+
+# %%
+pc.create_index(
+    name=index_name,
+    dimension=1536,
+    metric="cosine",
+    spec=PodSpec(environment=os.environ["PINECONE_ENV"], pod_type="starter", pods=1),
 )
+
+# %%
+embedding = OpenAIEmbeddings()
 
 # %%
 apify = ApifyWrapper()
@@ -40,8 +49,13 @@ loader = apify.call_actor(
     actor_id="apify/website-content-crawler",
     run_input={
         "includeUrlGlobs": [{"glob": "https://www.raiffeisen.at/rvs/de/privatkunden/*/*"}],
+        "excludeUrlGlobs": [
+            {
+                "glob": "https://www.raiffeisen.at/rvs/de/privatkunden/kredit-leasing/konsumkredit.html"
+            }
+        ],
         "maxCrawlDepth": 2,
-        "maxResults": 10,
+        "maxResults": 100,
         "startUrls": [{"url": "https://www.raiffeisen.at/rvs/de/privatkunden.html"}],
         "maxCrawlPages": 1000,
         "saveMarkdown": True,
@@ -93,18 +107,15 @@ import IPython
 IPython.display.Markdown(split_documents[0].page_content)
 
 # %%
-embeddings = OpenAIEmbeddings()
-openai_lc_client = Chroma.from_documents(
-    split_documents, embeddings, collection_name="rvs_webpages", client=persistent_client
+embedding = OpenAIEmbeddings()
+pc_vector_store = PineconeVectorStore(pc_index, embedding).from_documents(
+    split_documents,
+    embedding=embedding,
+    index_name=index_name,
 )
 
 # %%
-
-
-# %%
-list_of_urls = list({el["source"] for el in collection.get()["metadatas"]})
-list_of_urls
+pc_index.describe_index_stats()
 
 # %%
-persistent_client2 = chromadb.PersistentClient(path="./chroma_db")
-persistent_client2.get_collection("rvs_webpages").get()["metadatas"][0]
+pc_vector_store.search("Kredit", search_type="similarity")

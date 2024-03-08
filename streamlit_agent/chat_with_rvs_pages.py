@@ -2,13 +2,12 @@ import os
 import tempfile
 import streamlit as st
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_community.vectorstores import Chroma
+from langchain_pinecone import PineconeVectorStore
 from langchain.memory import ConversationBufferMemory
 from langchain_community.chat_message_histories import StreamlitChatMessageHistory
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain.chains import ConversationalRetrievalChain
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-import chromadb
+from pinecone import Pinecone
 
 st.set_page_config(page_title="LangChain: Chat with Documents", page_icon="🦜")
 st.title("🦜 LangChain: Chat with Documents")
@@ -50,12 +49,11 @@ class PrintRetrievalHandler(BaseCallbackHandler):
 
 openai_api_key = os.getenv("OPENAI_API_KEY", "not_supplied")
 
-embeddings = OpenAIEmbeddings()
-openai_lc_client = Chroma(
-    embedding_function=embeddings,
-    collection_name="rvs_webpages",
-    persist_directory="./notebooks/chroma_db",
-)
+embedding = OpenAIEmbeddings()
+index_name = "rvs-demo"
+pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
+pc_index = pc.Index(index_name)
+openai_lc_client = PineconeVectorStore(pc_index, embedding)
 retriever = openai_lc_client.as_retriever(search_type="mmr", search_kwargs={"k": 4, "fetch_k": 20})
 
 
