@@ -1,5 +1,6 @@
 import os
 import tempfile
+from operator import itemgetter
 import streamlit as st
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_pinecone import PineconeVectorStore
@@ -7,6 +8,11 @@ from langchain.memory import ConversationBufferMemory
 from langchain_community.chat_message_histories import StreamlitChatMessageHistory
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain.chains import ConversationalRetrievalChain
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.messages import AIMessage, HumanMessage, get_buffer_string
+from langchain_core.prompts import format_document, ChatPromptTemplate, PromptTemplate
+from langchain_core.runnables import RunnableParallel, RunnableLambda, RunnablePassthrough
+
 from pinecone import Pinecone
 
 st.set_page_config(page_title="LangChain: Chat with Documents", page_icon="🦜")
@@ -61,15 +67,50 @@ retriever = openai_lc_client.as_retriever(search_type="mmr", search_kwargs={"k":
 msgs = StreamlitChatMessageHistory()
 memory = ConversationBufferMemory(memory_key="chat_history", chat_memory=msgs, return_messages=True)
 
+
+_template = """Formuliere den folgenden Chatverlauf und die anschließende Frage so um, dass die anschließende Frage eine eigenständige Frage ist.
+
+Chatverlauf:
+{chat_history}
+Frage: {question}
+eigenständige Frage:"""
+CONDENSE_QUESTION_PROMPT = PromptTemplate.from_template(_template)
+
+template = """Beantworte die Frage basierend auf folgendem Kontext:
+{context}
+
+Question: {question}
+"""
+ANSWER_PROMPT = ChatPromptTemplate.from_template(template)
+
 # Setup LLM and QA chain
 llm = ChatOpenAI(
     model_name="gpt-3.5-turbo", openai_api_key=openai_api_key, temperature=0, streaming=True
 )
-qa_chain = ConversationalRetrievalChain.from_llm(
-    llm, retriever=retriever, memory=memory, verbose=True
-)
 
-if len(msgs.messages) == 0 or st.sidebar.button("Clear message history"):
+DEFAULT_DOCUMENT_PROMPT = PromptTemplate.from_template(template="{page_content}")
+
+
+def _combine_documents(docs, document_prompt=DEFAULT_DOCUMENT_PROMPT, document_separator="\n\n"):
+    doc_strings = [format_document(doc, document_prompt) for doc in docs]
+    return document_separator.join(doc_strings)
+
+
+_inputs = RunnableParallel(
+    standalone_question=RunnablePassthrough.assign(
+        chat_history=lambda x: get_buffer_string(x["chat_history"])
+    )
+    | CONDENSE_QUESTION_PROMPT
+    | ChatOpenAI(temperature=0)
+    | StrOutputParser(),
+)
+_context = {
+    "context": itemgetter("standalone_question") | retriever | _combine_documents,
+    "question": lambda x: x["standalone_question"],
+}
+conversational_qa_chain = _inputs | _context | ANSWER_PROMPT | llm
+
+if len(msgs.messages) == 0 or st.sidebar.button("Chatverlauf löschen"):
     msgs.clear()
     msgs.add_ai_message("Wie kann ich helfen?")
 
@@ -83,4 +124,8 @@ if user_query := st.chat_input(placeholder="Frage mich etwas!"):
     with st.chat_message("assistant"):
         retrieval_handler = PrintRetrievalHandler(st.container())
         stream_handler = StreamHandler(st.empty())
-        response = qa_chain.run(user_query, callbacks=[retrieval_handler, stream_handler])
+
+        response = conversational_qa_chain.invoke(
+            {"question": user_query, "chat_history": msgs.messages},
+            config={"callbacks": [retrieval_handler, stream_handler]},
+        )
