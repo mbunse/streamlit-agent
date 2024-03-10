@@ -1,5 +1,5 @@
+import base64
 import os
-import tempfile
 import streamlit as st
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_pinecone import PineconeVectorStore
@@ -7,10 +7,25 @@ from langchain.memory import ConversationBufferMemory
 from langchain_community.chat_message_histories import StreamlitChatMessageHistory
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain.chains import ConversationalRetrievalChain
+from langchain_core.prompts import (
+    PromptTemplate,
+    ChatPromptTemplate,
+    SystemMessagePromptTemplate,
+    HumanMessagePromptTemplate,
+)
 from pinecone import Pinecone
 
-st.set_page_config(page_title="LangChain: Chat with Documents", page_icon="🦜")
-st.title("🦜 LangChain: Chat with Documents")
+st.set_page_config(
+    page_title="Chat mit RVS Website",
+    page_icon="./streamlit_agent/static/OPENGRAPH_Giebelkreuz.png",
+)
+
+logo_image = "./streamlit_agent/static/OPENGRAPH_Giebelkreuz.png"
+logo_image_data = base64.b64encode(open(logo_image, "rb").read()).decode()
+st.markdown(
+    f'# <img src="data:image/png;base64,{logo_image_data}" alt="Raiffeisen Giebelkreuz" width="100"/> Chat mit RVS Website',
+    unsafe_allow_html=True,
+)
 
 
 class StreamHandler(BaseCallbackHandler):
@@ -59,19 +74,59 @@ retriever = openai_lc_client.as_retriever(search_type="mmr", search_kwargs={"k":
 
 # Setup memory for contextual conversation
 msgs = StreamlitChatMessageHistory()
-memory = ConversationBufferMemory(memory_key="chat_history", chat_memory=msgs, return_messages=True)
+memory = ConversationBufferMemory(
+    memory_key="chat_history",
+    chat_memory=msgs,
+    ai_prefix="Kundenbetreuer",
+    human_prefix="Kunde",
+    return_messages=True,
+)
 
 # Setup LLM and QA chain
 llm = ChatOpenAI(
     model_name="gpt-3.5-turbo", openai_api_key=openai_api_key, temperature=0, streaming=True
 )
-qa_chain = ConversationalRetrievalChain.from_llm(
-    llm, retriever=retriever, memory=memory, verbose=True
+condense_question_prompt = PromptTemplate(
+    input_variables=["chat_history", "question"],
+    template="""Formulieren Sie folgenden Chat-Verlauf und die anschließende Frage so um, dass sie eine eigenständige Frage des Kunden ist.
+
+
+Chat-Verlauf:
+{chat_history}
+anschließende Frage des Kunden: {question}
+eigenständige Frage des Kunden:""",
 )
 
-if len(msgs.messages) == 0 or st.sidebar.button("Clear message history"):
+answer_prompt_template = ChatPromptTemplate(
+    input_variables=["context", "question"],
+    messages=[
+        SystemMessagePromptTemplate(
+            prompt=PromptTemplate(
+                input_variables=["context"],
+                template="""Sie sind Kundenbetreuer der Raiffeisenbank Salzburg. Beantworten Sie die Frage am Ende des Textes anhand der folgenden Informationen. Wenn Sie die Antwort nicht wissen, sagen Sie einfach, dass Sie es nicht wissen, versuchen Sie nicht, eine Antwort zu erfinden.
+----------------
+{context}
+----------------
+""",
+            )
+        ),
+        HumanMessagePromptTemplate(
+            prompt=PromptTemplate(input_variables=["question"], template="{question}")
+        ),
+    ],
+)
+qa_chain = ConversationalRetrievalChain.from_llm(
+    llm,
+    retriever=retriever,
+    memory=memory,
+    verbose=True,
+    condense_question_prompt=condense_question_prompt,
+    combine_docs_chain_kwargs={"prompt": answer_prompt_template},
+)
+
+if len(msgs.messages) == 0 or st.sidebar.button("Chat-Verlauf löschen"):
     msgs.clear()
-    msgs.add_ai_message("Wie kann ich helfen?")
+    # msgs.add_ai_message("Wie kann ich helfen?")
 
 avatars = {"human": "user", "ai": "assistant"}
 for msg in msgs.messages:
