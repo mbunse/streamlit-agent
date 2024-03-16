@@ -20,6 +20,8 @@ from streamlit_agent.callbacks.capturing_callback_handler import playback_callba
 from streamlit_agent.clear_results import with_clear_container
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 
+from langchain_pinecone.vectorstores import PineconeVectorStore
+
 st.set_page_config(
     page_title="Chat mit Mathe Lehrer",
     page_icon="🧮",
@@ -44,37 +46,16 @@ index_name = "rvs-demo"
 #  'text': '# Abitur 2019 Mathematik Infinitesimalrechnung I  \n## Teilaufgabe Teil A 1 (5 BE)  \nGegeben ist die Funktion $f: x \\mapsto \\frac{e^{2 x}}{x}$ mit Definitionsbereich $D_{f}=\\mathbb{R} \\backslash\\{0\\}$. Bestimmen Sie Lage und Art des Extrempunkts des Graphen von $f$.  \nGegeben ist die in $\\mathbb{R} \\backslash\\{0\\}$ definierte Funktion $f: x \\mapsto 1-\\frac{1}{x^{2}}$, die die Nullstellen $x_{1}=-1$ und $x_{2}=1$ hat. Abbildung 1 zeigt den Graphen von $f$, der symmetrisch bezüglich der y-Achse ist. Weiterhin ist die Gerade $g$ mit der Gleichung $y=-3$ gegeben.  \n![](https://cdn.mathpix.com/cropped/2024_03_15_a1b141dba6eb6e8ea5efg-01.jpg?height=467&width=649&top_left_y=710&top_left_x=433)',
 #  'test_part': 'A'}
 
-metadata_field_info = [
-    AttributeInfo(
-        name="topic",
-        description="The topic of the test, possible value 'Stochastik'.",
-        type="string",
-    ),
-    AttributeInfo(
-        name="test_part",
-        description="The part of the test, possible values are 'A' or 'B'. A means part for which tools like a calculator are allowed, B means part for which no tools are allowed",
-        type="string",
-    ),
-]
-document_content_description = "Text extracts from math tests including solutions"
 
 pc = Pinecone_orig(api_key=os.environ["PINECONE_API_KEY"])
 pc.list_indexes()
 index_name = "rvs-demo"
 pc_index = pc.Index(index_name)
-vector_store = Pinecone(pc_index, embedding, text_key="text")
+vectorstore = PineconeVectorStore(
+    index=pc_index,
+    embedding=embedding,
+)
 
-llm_retriever = ChatOpenAI(
-    model_name="gpt-3.5-turbo", openai_api_key=openai_api_key, temperature=0, streaming=True
-)
-retriever = SelfQueryRetriever.from_llm(
-    llm_retriever,
-    vector_store,
-    document_content_description,
-    metadata_field_info,
-    verbose=True,
-    search_kwargs={"k": 2},
-)
 
 # Setup LLM and QA chain
 model_name = st.sidebar.selectbox("model_name", ["gpt-3.5-turbo", "gpt-4"])
@@ -97,22 +78,36 @@ def format_docs(docs):
     )
 
 
-chain = (
-    {"context": retriever | format_docs, "question": RunnablePassthrough()}
-    | prompt
-    | llm
-    | StrOutputParser()
-)
+ctx = get_script_run_ctx()
 
 with st.form(key="form"):
-    # topic = st.selectbox("Thema", ["Stochastik",])
-    # test_part = st.selectbox("Teil der Klausur", ["A", "B"])
+    topic = st.selectbox(
+        "Thema",
+        [
+            "Stochastik",
+        ],
+    )
+    test_part = st.selectbox("Teil der Klausur", ["A", "B"])
     user_input = st.text_area(
         "Was soll bei der Erstellung der Klausur-Aufgabe berücksichtigt werden?"
     )
     submit_clicked = st.form_submit_button("Aufgabe erstellen")
 
-ctx = get_script_run_ctx()
+chain = (
+    {
+        "context": vectorstore.as_retriever(
+            search_kwargs={
+                "k": 2,
+                "filter": {"topic": topic, "test_part": test_part, "use_case": "abi_math"},
+            }
+        )
+        | format_docs,
+        "question": RunnablePassthrough(),
+    }
+    | prompt
+    | llm
+    | StrOutputParser()
+)
 
 
 class StreamHandler(BaseCallbackHandler):
