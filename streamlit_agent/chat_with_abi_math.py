@@ -79,18 +79,18 @@ index_name = "rvs-demo"
 
 metadata_field_info = [
     AttributeInfo(
-        name="Header 1",
-        description="Main header of the test, e.g. Abitur 2019 Mathematik Infinitesimalrechnung",
+        name="exam",
+        description="Title of the exam, e.g. Abitur 2019 Mathematik Infinitesimalrechnung",
         type="string",
     ),
     AttributeInfo(
-        name="Header 2",
-        description="Secondary header of the test, e.g. Teilaufgabe Teil A 1 (5 BE)",
+        name="task",
+        description="task of the exam, e.g. Aufgabe A 1",
         type="string",
     ),
     AttributeInfo(
         name="topic",
-        description="The topic of the test",
+        description="The topic of the test, e.g Stochastik",
         type="string",
     ),
     AttributeInfo(
@@ -145,15 +145,17 @@ eigenständige Frage des Lehrer-Kollegen:""",
 )
 
 answer_prompt_template = ChatPromptTemplate(
-    input_variables=["context", "question"],
+    input_variables=["context", "question", "chat_history"],
     messages=[
         SystemMessagePromptTemplate(
             prompt=PromptTemplate(
                 input_variables=["context"],
-                template="""Sie sind ein für Mathematik-Lehrer. Beantworten Sie die Frage am Ende des Textes anhand der folgenden Texte aus alten Klausuren und versuchen Sie sich unbedingt an den Stil der alten Klausuraufgaben bei ihrer Antowrt zu orientieren.
+                template="""Sie sind ein für Mathematik-Lehrer und sollen eine Abitur-Klausuraufgabe inkl. Lösung erstellen. Gehen sie dabei auf den Wunsch des Kollegen am Ende des Chat-Verlaufs ein und orientieren Sie sich bzgl. Schweirigkeitsgrad, Anspruch und Inhalt anhand der folgenden Beispiel aus alten Abitur-Klausuren.
 ----------------
 {context}
 ----------------
+Chat-Verlauf:
+{chat_history},
 """,
             )
         ),

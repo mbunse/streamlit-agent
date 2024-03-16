@@ -1,9 +1,8 @@
 # %%
-from langchain.docstore.document import Document
-from langchain.indexes import VectorstoreIndexCreator
 from langchain_community.document_loaders import MathpixPDFLoader
 from langchain_text_splitters import MarkdownHeaderTextSplitter
 from langchain_openai import OpenAIEmbeddings
+from langchain_core.documents import Document
 from datetime import datetime
 import pickle
 from langchain_pinecone import PineconeVectorStore
@@ -31,7 +30,35 @@ import itertools
 
 # %%
 data = pickle.load(open("abi_mathe.pkl", "rb"))
+data[:1]
+
+# %%
+data[0].metadata
+
+# %%
+for doc in data:
+    filename = os.path.basename(doc.metadata["source"]).split(".")[0]
+    out_path = f"../data/md/{filename}.md"
+
+    # write the markdown file
+    with open(out_path, "w") as f:
+        f.write(doc.page_content)
+
+
+# %%
+edited_md_files = [
+    "../data/md/2015_Stochastik_III.md",
+    "../data/md/2015_Stochastik_IV.md",
+]
+data = []
+for filename in edited_md_files:
+    with open(filename, "r") as f:
+        content = f.read()
+        data.append(Document(content, metadata={"source": filename}))
 data
+
+# %%
+data[0].metadata
 
 # %%
 import IPython
@@ -62,9 +89,8 @@ data[0].page_content
 
 # %%
 headers_to_split_on = [
-    ("#", "Header 1"),
-    ("##", "Header 2"),
-    ("###", "Header 3"),
+    ("#", "exam"),
+    ("##", "task"),
 ]
 
 splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on, strip_headers=False)
@@ -81,17 +107,9 @@ md_header_splits[0].metadata
 # %%
 for doc in md_header_splits:
     doc.metadata["use_case"] = "abi_math"
-    if (
-        ("Header 1" in doc.metadata and "Teil A" in doc.metadata["Header 1"])
-        or ("Header 2" in doc.metadata and "Teil A" in doc.metadata["Header 2"])
-        or ("Header 3" in doc.metadata and "Teil A" in doc.metadata["Header 3"])
-    ):
+    if "task" in doc.metadata and " A" in doc.metadata["task"]:
         doc.metadata["test_part"] = "A"
-    elif (
-        ("Header 1" in doc.metadata and "Teil B" in doc.metadata["Header 1"])
-        or ("Header 2" in doc.metadata and "Teil B" in doc.metadata["Header 2"])
-        or ("Header 3" in doc.metadata and "Teil B" in doc.metadata["Header 3"])
-    ):
+    elif "task" in doc.metadata and " B" in doc.metadata["task"]:
         doc.metadata["test_part"] = "B"
 md_header_splits[0].metadata
 
