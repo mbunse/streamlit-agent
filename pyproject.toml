@@ -23,6 +23,8 @@ langchainhub = ">=0.1.14"
 apify-client = ">=1.6.4"
 build = "^1.1.1"
 langchain-pinecone = "^0.0.3"
+docx2txt = "^0.8"
+lark = "^1.1.9"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.3.0"
