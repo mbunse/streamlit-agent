@@ -1,5 +1,7 @@
 import base64
 import os
+import re
+import threading
 import streamlit as st
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from pinecone import Pinecone as Pinecone_orig
@@ -7,16 +9,16 @@ from langchain_community.vectorstores.pinecone import Pinecone
 from langchain.memory import ConversationBufferMemory
 from langchain_community.chat_message_histories import StreamlitChatMessageHistory
 from langchain.callbacks.base import BaseCallbackHandler
+from langchain.callbacks.tracers import ConsoleCallbackHandler
 from langchain.chains.query_constructor.base import AttributeInfo
 from langchain.retrievers.self_query.base import SelfQueryRetriever
-from langchain.chains import ConversationalRetrievalChain
-from langchain_core.prompts import (
-    PromptTemplate,
-    ChatPromptTemplate,
-    SystemMessagePromptTemplate,
-    HumanMessagePromptTemplate,
-)
-
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough, RunnableConfig
+from langchain_community.callbacks import StreamlitCallbackHandler
+from langchain_core.prompts import ChatPromptTemplate
+from streamlit_agent.callbacks.capturing_callback_handler import playback_callbacks
+from streamlit_agent.clear_results import with_clear_container
+from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 
 st.set_page_config(
     page_title="Chat mit Mathe Lehrer",
@@ -24,41 +26,6 @@ st.set_page_config(
 )
 
 st.markdown("# 🧮 Chat mit Mathe Lehrer")
-
-
-class StreamHandler(BaseCallbackHandler):
-    def __init__(self, container: st.delta_generator.DeltaGenerator, initial_text: str = ""):
-        self.container = container
-        self.text = initial_text
-        self.run_id_ignore_token = None
-
-    def on_llm_start(self, serialized: dict, prompts: list, **kwargs):
-        # Workaround to prevent showing the rephrased question as output
-        if prompts[0].startswith("Human"):
-            self.run_id_ignore_token = kwargs.get("run_id")
-
-    def on_llm_new_token(self, token: str, **kwargs) -> None:
-        if self.run_id_ignore_token == kwargs.get("run_id", False):
-            return
-        self.text += token
-        self.container.markdown(self.text)
-
-
-class PrintRetrievalHandler(BaseCallbackHandler):
-    def __init__(self, container):
-        self.status = container.status("**Context Retrieval**")
-
-    def on_retriever_start(self, serialized: dict, query: str, **kwargs):
-        self.status.write(f"**Frage:** {query}")
-        self.status.update(label=f"**Context Retrieval:** {query}")
-
-    def on_retriever_end(self, documents, **kwargs):
-        for idx, doc in enumerate(documents):
-            source = doc.metadata["source"]
-            self.status.write(f"**{source}**")
-            self.status.markdown(doc.page_content)
-        self.status.update(state="complete")
-
 
 openai_api_key = os.getenv("OPENAI_API_KEY", "not_supplied")
 
@@ -79,23 +46,13 @@ index_name = "rvs-demo"
 
 metadata_field_info = [
     AttributeInfo(
-        name="exam",
-        description="Title of the exam, e.g. Abitur 2019 Mathematik Infinitesimalrechnung",
-        type="string",
-    ),
-    AttributeInfo(
-        name="task",
-        description="task of the exam, e.g. Aufgabe A 1",
-        type="string",
-    ),
-    AttributeInfo(
         name="topic",
-        description="The topic of the test, e.g Stochastik",
+        description="The topic of the test, possible value 'Stochastik'.",
         type="string",
     ),
     AttributeInfo(
         name="test_part",
-        description="The part of the test. A means part for which tools like a calculator are allowed, B means part for which no tools are allowed",
+        description="The part of the test, possible values are 'A' or 'B'. A means part for which tools like a calculator are allowed, B means part for which no tools are allowed",
         type="string",
     ),
 ]
@@ -116,16 +73,7 @@ retriever = SelfQueryRetriever.from_llm(
     document_content_description,
     metadata_field_info,
     verbose=True,
-)
-
-# Setup memory for contextual conversation
-msgs = StreamlitChatMessageHistory()
-memory = ConversationBufferMemory(
-    memory_key="chat_history",
-    chat_memory=msgs,
-    ai_prefix="Anwalt",
-    human_prefix="Mandant",
-    return_messages=True,
+    search_kwargs={"k": 2},
 )
 
 # Setup LLM and QA chain
@@ -133,58 +81,100 @@ model_name = st.sidebar.selectbox("model_name", ["gpt-3.5-turbo", "gpt-4"])
 llm = ChatOpenAI(
     model_name=model_name, openai_api_key=openai_api_key, temperature=0, streaming=True
 )
-condense_question_prompt = PromptTemplate(
-    input_variables=["chat_history", "question"],
-    template="""Formulieren Sie folgenden Chat-Verlauf und die anschließende Frage so um, dass sie eine eigenständige Frage des Lehrer-Kollegen ist.
 
-
-Chat-Verlauf:
-{chat_history}
-anschließende Frage des Lehrer-Kollegen: {question}
-eigenständige Frage des Lehrer-Kollegen:""",
-)
-
-answer_prompt_template = ChatPromptTemplate(
-    input_variables=["context", "question", "chat_history"],
-    messages=[
-        SystemMessagePromptTemplate(
-            prompt=PromptTemplate(
-                input_variables=["context"],
-                template="""Sie sind ein für Mathematik-Lehrer und sollen eine Abitur-Klausuraufgabe inkl. Lösung erstellen. Gehen sie dabei auf den Wunsch des Kollegen am Ende des Chat-Verlaufs ein und orientieren Sie sich bzgl. Schweirigkeitsgrad, Anspruch und Inhalt anhand der folgenden Beispiel aus alten Abitur-Klausuren.
+template = """Sie sind ein für Mathematik-Lehrer und sollen eine Abitur-Klausuraufgabe inkl. Lösung erstellen. Gehen sie dabei auf den Wunsch des Kollegen am Ende des Chat-Verlaufs ein und orientieren Sie sich bzgl. Schweirigkeitsgrad, Anspruch und Inhalt anhand der folgenden Beispiel aus alten Abitur-Klausuren.
 ----------------
 {context}
 ----------------
-Chat-Verlauf:
-{chat_history},
-""",
-            )
-        ),
-        HumanMessagePromptTemplate(
-            prompt=PromptTemplate(input_variables=["question"], template="{question}")
-        ),
-    ],
+Berückstichtigen Sie für die Klausur-Aufgabe dabei bitte die Folgendes: {question}
+"""
+prompt = ChatPromptTemplate.from_template(template)
+
+
+def format_docs(docs):
+    return "\n\n---------\n\n".join(
+        [f"Aus {d.metadata['exam']}:\n\n{d.page_content}" for d in docs]
+    )
+
+
+chain = (
+    {"context": retriever | format_docs, "question": RunnablePassthrough()}
+    | prompt
+    | llm
+    | StrOutputParser()
 )
-qa_chain = ConversationalRetrievalChain.from_llm(
-    llm,
-    retriever=retriever,
-    memory=memory,
-    verbose=True,
-    condense_question_prompt=condense_question_prompt,
-    combine_docs_chain_kwargs={"prompt": answer_prompt_template},
-)
 
-if len(msgs.messages) == 0 or st.sidebar.button("Chat-Verlauf löschen"):
-    msgs.clear()
-    # msgs.add_ai_message("Wie kann ich helfen?")
+with st.form(key="form"):
+    # topic = st.selectbox("Thema", ["Stochastik",])
+    # test_part = st.selectbox("Teil der Klausur", ["A", "B"])
+    user_input = st.text_area(
+        "Was soll bei der Erstellung der Klausur-Aufgabe berücksichtigt werden?"
+    )
+    submit_clicked = st.form_submit_button("Aufgabe erstellen")
 
-avatars = {"human": "user", "ai": "assistant"}
-for msg in msgs.messages:
-    st.chat_message(avatars[msg.type]).write(msg.content)
+ctx = get_script_run_ctx()
 
-if user_query := st.chat_input(placeholder="Frage mich etwas!"):
-    st.chat_message("user").write(user_query)
 
-    with st.chat_message("assistant"):
+class StreamHandler(BaseCallbackHandler):
+    def __init__(self, container: st.delta_generator.DeltaGenerator, initial_text: str = ""):
+        self.container = container
+        self.text = initial_text
+        self.run_id_ignore_token = None
+
+    def on_llm_start(self, serialized: dict, prompts: list, **kwargs):
+        # Workaround to prevent showing the rephrased question as output
+        add_script_run_ctx(threading.current_thread(), ctx)
+        if prompts[0].startswith("Human"):
+            self.run_id_ignore_token = kwargs.get("run_id")
+
+    def on_llm_new_token(self, token: str, **kwargs) -> None:
+        if self.run_id_ignore_token == kwargs.get("run_id", False):
+            return
+        self.text += token
+        self.container.markdown(self.text)
+
+
+class PrintRetrievalHandler(BaseCallbackHandler):
+    def __init__(self, container):
+        self.status = container.status("**Context Retrieval**")
+
+    def on_retriever_start(self, serialized: dict, query: str, **kwargs):
+        add_script_run_ctx(threading.current_thread(), ctx)
+        self.status.write(f"**Frage:** {query}")
+        self.status.update(label=f"**Context Retrieval:** {query}")
+
+    def on_chain_end(self, outputs: dict, **kwargs):
+        if "repr" in outputs:
+            match = re.search(r"filter=(.*?),", outputs["repr"])
+            if match:
+                self.status.write(f"**Filter:** {match.group(1)}")
+
+    def on_retriever_end(self, documents, **kwargs):
+        for idx, doc in enumerate(documents):
+            source = doc.metadata["source"]
+            self.status.write(f"**{source}**")
+            self.status.markdown(doc.page_content)
+        self.status.update(state="complete")
+
+
+output_container = st.empty()
+if with_clear_container(submit_clicked):
+    output_container = output_container.container()
+    output_container.chat_message("user").write(user_input)
+
+    answer_container = output_container.chat_message("assistant", avatar="🧮")
+
+    with answer_container:
         retrieval_handler = PrintRetrievalHandler(st.container())
         stream_handler = StreamHandler(st.empty())
-        response = qa_chain.run(user_query, callbacks=[retrieval_handler, stream_handler])
+    # st_callback = StreamlitCallbackHandler(answer_container)
+    cfg = RunnableConfig()
+    # cfg["callbacks"] = [st_callback]
+    cfg["callbacks"] = [retrieval_handler, stream_handler, ConsoleCallbackHandler()]
+    # cfg["max_concurrency"] = 0
+
+    # If we've saved this question, play it back instead of actually running LangChain
+    # (so that we don't exhaust our API calls unnecessarily)
+    answer = chain.stream(user_input, cfg)
+
+    answer_container.write(answer)
