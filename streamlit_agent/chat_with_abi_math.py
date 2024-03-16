@@ -9,12 +9,21 @@ from langchain_community.chat_message_histories import StreamlitChatMessageHisto
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain.chains.query_constructor.base import AttributeInfo
 from langchain.retrievers.self_query.base import SelfQueryRetriever
-from langchain.chains import ConversationalRetrievalChain
+from langchain.chains import LLMMathChain
+from langchain_core.runnables import RunnableConfig
+from langchain_community.callbacks import StreamlitCallbackHandler
+from langchain.tools.retriever import create_retriever_tool
+from langchain.agents import AgentType, initialize_agent
+from langchain.agents import AgentExecutor, Tool, create_react_agent
+from streamlit_agent.clear_results import with_clear_container
+from langchain import hub
+
 from langchain_core.prompts import (
     PromptTemplate,
     ChatPromptTemplate,
     SystemMessagePromptTemplate,
     HumanMessagePromptTemplate,
+    MessagesPlaceholder,
 )
 
 
@@ -106,83 +115,62 @@ pc.list_indexes()
 index_name = "rvs-demo"
 pc_index = pc.Index(index_name)
 vector_store = Pinecone(pc_index, embedding, text_key="text")
+model_name = st.sidebar.selectbox("model_name", ["gpt-3.5-turbo", "gpt-4"])
 
-llm_retriever = ChatOpenAI(
+llm = ChatOpenAI(
     model_name="gpt-3.5-turbo", openai_api_key=openai_api_key, temperature=0, streaming=True
 )
 retriever = SelfQueryRetriever.from_llm(
-    llm_retriever,
+    llm,
     vector_store,
     document_content_description,
     metadata_field_info,
     verbose=True,
 )
 
-# Setup memory for contextual conversation
-msgs = StreamlitChatMessageHistory()
-memory = ConversationBufferMemory(
-    memory_key="chat_history",
-    chat_memory=msgs,
-    ai_prefix="Anwalt",
-    human_prefix="Mandant",
-    return_messages=True,
+retriever_tool = create_retriever_tool(
+    retriever,
+    "math_test_similar",
+    "Search for similar extracts from German math tests. Test part A is for which tools like a calculator are allowed, for test part B no tools are allowed. Example: 'Statisikaufgabe ohne Taschenrechner zur Normalverteilung'",
 )
+llm_math_chain = LLMMathChain.from_llm(llm)
 
-# Setup LLM and QA chain
-model_name = st.sidebar.selectbox("model_name", ["gpt-3.5-turbo", "gpt-4"])
-llm = ChatOpenAI(
-    model_name=model_name, openai_api_key=openai_api_key, temperature=0, streaming=True
-)
-condense_question_prompt = PromptTemplate(
-    input_variables=["chat_history", "question"],
-    template="""Formulieren Sie folgenden Chat-Verlauf und die anschließende Frage so um, dass sie eine eigenständige Frage des Lehrer-Kollegen ist.
+tools = [
+    retriever_tool,
+    Tool(
+        name="Calculator",
+        func=llm_math_chain.run,
+        description="useful for when you need to answer questions about math",
+    ),
+]
 
-
-Chat-Verlauf:
-{chat_history}
-anschließende Frage des Lehrer-Kollegen: {question}
-eigenständige Frage des Lehrer-Kollegen:""",
-)
-
-answer_prompt_template = ChatPromptTemplate(
-    input_variables=["context", "question"],
-    messages=[
-        SystemMessagePromptTemplate(
-            prompt=PromptTemplate(
-                input_variables=["context"],
-                template="""Sie sind ein für Mathematik-Lehrer. Beantworten Sie die Frage am Ende des Textes anhand der folgenden Texte aus alten Klausuren und versuchen Sie sich unbedingt an den Stil der alten Klausuraufgaben bei ihrer Antowrt zu orientieren.
-----------------
-{context}
-----------------
-""",
-            )
-        ),
-        HumanMessagePromptTemplate(
-            prompt=PromptTemplate(input_variables=["question"], template="{question}")
-        ),
-    ],
-)
-qa_chain = ConversationalRetrievalChain.from_llm(
+react_agent = create_react_agent(
     llm,
-    retriever=retriever,
-    memory=memory,
-    verbose=True,
-    condense_question_prompt=condense_question_prompt,
-    combine_docs_chain_kwargs={"prompt": answer_prompt_template},
+    tools,
+    PromptTemplate(
+        input_variables=["agent_scratchpad", "input", "tool_names", "tools"],
+        template="You are a math teacher. Construct a new task for a math test and provide a solution. You have access to the following tools:\n\n{tools}\n\nUse the following format:\n\nQuestion: the input question you must answer\nThought: you should always think about what to do\nAction: the action to take, should be one of [{tool_names}]\nAction Input: the input to the action\nObservation: the result of the action\n... (this Thought/Action/Action Input/Observation can repeat N times)\nThought: I now know the final answer\nFinal Answer: the final answer to the original input question **in German**!\n\nBegin!\n\nQuestion: {input}\nThought:{agent_scratchpad}",
+    ),
 )
+mrkl = AgentExecutor(agent=react_agent, tools=tools)
 
-if len(msgs.messages) == 0 or st.sidebar.button("Chat-Verlauf löschen"):
-    msgs.clear()
-    # msgs.add_ai_message("Wie kann ich helfen?")
+with st.form(key="form"):
+    user_input = st.text_input("Or, ask your own question")
+    submit_clicked = st.form_submit_button("Submit Question")
 
-avatars = {"human": "user", "ai": "assistant"}
-for msg in msgs.messages:
-    st.chat_message(avatars[msg.type]).write(msg.content)
 
-if user_query := st.chat_input(placeholder="Frage mich etwas!"):
-    st.chat_message("user").write(user_query)
+output_container = st.empty()
+if with_clear_container(submit_clicked):
+    output_container = output_container.container()
+    output_container.chat_message("user").write(user_input)
 
-    with st.chat_message("assistant"):
-        retrieval_handler = PrintRetrievalHandler(st.container())
-        stream_handler = StreamHandler(st.empty())
-        response = qa_chain.run(user_query, callbacks=[retrieval_handler, stream_handler])
+    answer_container = output_container.chat_message("assistant", avatar="🦜")
+    st_callback = StreamlitCallbackHandler(answer_container)
+    cfg = RunnableConfig()
+    cfg["callbacks"] = [st_callback]
+
+    # If we've saved this question, play it back instead of actually running LangChain
+    # (so that we don't exhaust our API calls unnecessarily)
+    answer = mrkl.invoke({"input": user_input}, cfg)
+
+    answer_container.write(answer["output"])
