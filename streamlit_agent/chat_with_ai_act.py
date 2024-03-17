@@ -32,6 +32,9 @@ from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ct
 from langchain_pinecone.vectorstores import PineconeVectorStore
 from langchain.tools.retriever import create_retriever_tool
 from streamlit.external.langchain.streamlit_callback_handler import LLMThought
+from langchain.globals import set_debug
+
+set_debug(True)
 
 import pandas as pd
 
@@ -104,11 +107,37 @@ vectorstore = PineconeVectorStore(
 
 df_ai_act = pd.read_pickle("notebooks/ai_act_df.pkl")
 
+relevant_section_title = "\n".join(
+    [
+        f" * {entry}"
+        for entry in df_ai_act["article"].fillna(df_ai_act["chapter"]).drop_duplicates().tolist()
+    ]
+)
+
 
 @tool
-def ai_act_article(query: int) -> str:
-    """Zeige den Inhalt des betreffenden Artikels der EU KI Verordnung."""
-    return df_ai_act.query(f"article_no == {query}").iloc[0]["page_content"]
+def ai_act_article(query: str) -> str:
+    """Zeige den Inhalt des betreffenden Artikels oder Anhangs der EU KI Verordnung. z.B. 'Artikel 9' oder 'Anhang III'."""
+
+    error = "Leider konnte ich keinen passenden Artikel finden. Bitte geben Sie einen gültigen Artikel an."
+    if match := re.match(r"Artikel\s+(\d+).*", query):
+        query = int(match.group(1))
+        if (result := df_ai_act.query(f"article_no == {query}")).empty:
+            return error
+        return result.iloc[0]["page_content"]
+    elif match := re.search(r"Anhang\s+([IVX]+).*", query):
+        query = match.group(1)
+        if (result := df_ai_act.query(f"chapter.str.startswith('Anhang {query}')")).empty:
+            return error
+        return result.iloc[0]["page_content"]
+    else:
+        return "Leider konnte ich keinen passenden Artikel oder Anhang finden. Bitte geben Sie einen gültigen Artikel oder Anhang an."
+
+
+@tool
+def ai_act_content() -> str:
+    """Zeige das Inhaltsverzeichnis der EU KI Verordnung."""
+    return relevant_section_title
 
 
 from langchain_core.chat_history import BaseChatMessageHistory
@@ -329,19 +358,19 @@ retrieved_documents = {
 
 document_prompt = PromptTemplate(
     input_variables=["page_content", "article", "chapter"],
-    template="{page_content}\nQuelle:{chapter}, {article}",
+    template="{page_content}\n\n*Quelle\:* *{chapter}*, *{article}*\n",
 )
 
 ai_act_retriever_tool = create_retriever_tool(
     vectorstore.as_retriever(search_kwargs={"k": 4, "filter": {"use_case": "ai_regulation"}}),
-    "search_eu_ai_act",
-    "Suche in der EU KI Verordnung nach passenden Abschnitten.",
+    "retrieve_similar_eu_ai_act",
+    "Erhalte zu einem Textausschnitt oder zu einer Frage ähnliche Abschnitte aus der EU KI Verordnung.",
     document_prompt=document_prompt,
 )
 
 DEFAULT_DOCUMENT_PROMPT = PromptTemplate.from_template(template="{page_content}")
 
-tool_list = [ai_act_article, ai_act_retriever_tool]
+tool_list = [ai_act_article, ai_act_retriever_tool, ai_act_content]
 
 MEMORY_KEY = "chat_history"
 prompt = ChatPromptTemplate.from_messages(
