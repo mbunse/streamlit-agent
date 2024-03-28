@@ -63,7 +63,7 @@ llm = ChatOpenAI(
     model_name=model_name, openai_api_key=openai_api_key, temperature=0, streaming=True
 )
 
-template = """Sie sind ein für Mathematik-Lehrer und sollen eine Abitur-Klausuraufgabe inkl. Lösung erstellen. Gehen sie dabei auf den Wunsch des Kollegen am Ende des Chat-Verlaufs ein und orientieren Sie sich bzgl. Schweirigkeitsgrad, Anspruch und Inhalt anhand der folgenden Beispiel aus alten Abitur-Klausuren.
+template = """Sie sind ein Mathematik-Lehrer und sollen eine Abitur-Klausuraufgabe inkl. Lösung erstellen. Gehen sie dabei auf den Wunsch des Kollegen am Ende des Chat-Verlaufs ein und orientieren Sie sich bzgl. Schweirigkeitsgrad, Anspruch und Inhalt anhand der folgenden Beispiel aus alten Abitur-Klausuren.
 ----------------
 {context}
 ----------------
