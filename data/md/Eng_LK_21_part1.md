@@ -181,7 +181,7 @@ Klausurteil A: Teilleistungen –  Kriterien (Schreiben/Lesen integriert)
 |    | Anforderung | maximal erreichbare Punktzahl |
 | -- | ----------- | ----------------------------- |
 |  1 | fasst die Einschätzung  des lyrischen Ichs bezüglich der gegenwärtigen Situation seiner Heimat  Afrika  zusammen : <br/>* den Reichtum an landschaftlicher Schönheit und Vielfalt,<br/>* die innere Zerrissenheit und das Fehlen klarer Entwicklungsperspektiven, <br/>* die damit verbundene Stagnation. | 6 | 
-|  2 | stellt die vom lyrischen Ich genannten Gründe für die sich in unterschiedlichen Lebensbereichen manifestierenden gegenwärtigen Konflikte  sowie die sich daraus ergebende Schlussfolgerung dar:  <br/>* die Kolonialisierung als Ursache aktueller Probleme,  <br/>* die unreflektierte Übernahme westlicher Einflüsse und Verm ischung mit traditionellen afrikanischen Lebensweisen,  <br/>* die nicht hinterfragte Rückbesinnung auf althergebrachte Wertvorstellungen, <br/>* die Notwendigkeit eines Aufbruchs in eine selbstbestimmte Zukunft. | 6 |
+|  2 | stellt die vom lyrischen Ich genannten Gründe für die sich in unterschiedlichen Lebensbereichen manifestierenden gegenwärtigen Konflikte  sowie die sich daraus ergebende Schlussfolgerung dar:  <br/>* die Kolonialisierung als Ursache aktueller Probleme,  <br/>* die unreflektierte Übernahme westlicher Einflüsse und Vermischung mit traditionellen afrikanischen Lebensweisen,  <br/>* die nicht hinterfragte Rückbesinnung auf althergebrachte Wertvorstellungen, <br/>* die Notwendigkeit eines Aufbruchs in eine selbstbestimmte Zukunft. | 6 |
 
 ##### Teilaufgabe 2 (Analysis)  
 |    | Anforderung | maximal erreichbare Punktzahl |
