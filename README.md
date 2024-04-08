@@ -36,7 +36,10 @@ This project uses [Poetry](https://python-poetry.org/) for dependency management
 ```shell
 # Create Python environment
 $ poetry install
+$ conda install -c conda-forge pandoc
+```
 
+```shell
 # Install git pre-commit hooks
 $ poetry shell
 $ pre-commit install

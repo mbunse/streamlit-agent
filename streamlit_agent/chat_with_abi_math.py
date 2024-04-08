@@ -1,3 +1,4 @@
+from typing import Any
 import base64
 import os
 import re
@@ -16,9 +17,11 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough, RunnableConfig
 from langchain_community.callbacks import StreamlitCallbackHandler
 from langchain_core.prompts import ChatPromptTemplate
+from langchain.schema.output import LLMResult
 from streamlit_agent.callbacks.capturing_callback_handler import playback_callbacks
 from streamlit_agent.clear_results import with_clear_container
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+import pypandoc
 
 from langchain_pinecone.vectorstores import PineconeVectorStore
 
@@ -58,12 +61,12 @@ vectorstore = PineconeVectorStore(
 
 
 # Setup LLM and QA chain
-model_name = st.sidebar.selectbox("model_name", ["gpt-3.5-turbo", "gpt-4"])
+model_name = st.sidebar.selectbox("model_name", ["gpt-3.5-turbo", "gpt-4-turbo-preview"])
 llm = ChatOpenAI(
     model_name=model_name, openai_api_key=openai_api_key, temperature=0, streaming=True
 )
 
-template = """Sie sind ein Mathematik-Lehrer und sollen eine Abitur-Klausuraufgabe inkl. Lösung erstellen. Gehen sie dabei auf den Wunsch des Kollegen am Ende des Chat-Verlaufs ein und orientieren Sie sich bzgl. Schweirigkeitsgrad, Anspruch und Inhalt anhand der folgenden Beispiel aus alten Abitur-Klausuren.
+template = """Sie sind ein Mathematik-Lehrer und sollen eine Abitur-Klausuraufgabe inkl. Lösung erstellen. Gehen sie dabei auf den Wunsch des Kollegen am Ende des Chat-Verlaufs ein und orientieren Sie sich bzgl. Schwierigkeitsgrad, Anspruch und Inhalt anhand der folgenden Beispiel aus alten Abitur-Klausuren.
 ----------------
 {context}
 ----------------
@@ -127,6 +130,19 @@ class StreamHandler(BaseCallbackHandler):
             return
         self.text += token
         self.container.markdown(self.text)
+
+    def on_llm_end(self, response: LLMResult, **kwargs) -> Any:
+        add_script_run_ctx(threading.current_thread(), ctx)
+        pypandoc.convert_text(
+            response.generations[0][0].text, "docx", format="md", outputfile="output.docx"
+        )
+        with open("output.docx", "rb") as output:
+            self.container.download_button(
+                "Download",
+                output,
+                "output.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
 
 
 class PrintRetrievalHandler(BaseCallbackHandler):

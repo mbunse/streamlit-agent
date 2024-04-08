@@ -25,6 +25,7 @@ build = "^1.1.1"
 langchain-pinecone = "^0.0.3"
 docx2txt = "^0.8"
 lark = "^1.1.9"
+pypandoc = "^1.13"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.3.0"
